@@ -36,10 +36,6 @@ This project is designed to be responsive, engaging, and user-friendly, making i
 
 ---
 
-## 🚀 Live Demo
-
-[Click here to play the game](#) _(Add your deployed link here once hosted)_
-
 ---
 
 ## 📂 Project Structure
