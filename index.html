@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sliding Puzzle — AI Solver</title>
+  <style>
+    :root{
+      --bg:#0f1724;--card:#0b1220;--accent:#7c3aed;--muted:#94a3b8;--glass:rgba(255,255,255,0.03);
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial; background:linear-gradient(180deg,#071021 0%, #071428 100%);color:#e6eef8;display:flex;align-items:center;justify-content:center;min-height:100vh}
+    .app{width:980px;max-width:96%;display:grid;grid-template-columns:340px 1fr;gap:24px}
+    .panel{background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);padding:20px;border-radius:14px;box-shadow:0 6px 30px rgba(2,6,23,0.7);backdrop-filter: blur(6px)}
+    h1{font-size:18px;margin:0 0 12px}
+    .controls{display:flex;flex-direction:column;gap:12px}
+    label{font-size:13px;color:var(--muted)}
+    select,input[type=range]{width:100%}
+    .buttons{display:flex;gap:8px;flex-wrap:wrap}
+    button{background:var(--accent);border:0;padding:10px 12px;border-radius:10px;color:white;font-weight:600;cursor:pointer;box-shadow:0 6px 18px rgba(124,58,237,0.18)}
+    button.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);box-shadow:none;color:var(--muted);font-weight:600}
+    .board-wrap{display:flex;flex-direction:column;gap:12px;align-items:center}
+    .board{width:min(640px,80vmin);height:min(640px,80vmin);background:var(--glass);display:grid;border-radius:14px;padding:12px;gap:10px;position:relative}
+    .tile{display:flex;align-items:center;justify-content:center;font-weight:700;font-size:calc(18px + .8vmin);border-radius:10px;background:linear-gradient(180deg,#0b2033,#072033);cursor:pointer;user-select:none;transition:transform .22s cubic-bezier(.2,.9,.3,1), box-shadow .15s}
+    .tile:active{transform:scale(.98)}
+    .empty{background:transparent;cursor:default}
+
+    .meta{display:flex;gap:12px;align-items:center}
+    .stat{background:rgba(255,255,255,0.02);padding:8px 12px;border-radius:10px;color:var(--muted);font-weight:600}
+
+    .footer{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:var(--muted);font-size:13px}
+
+    @media (max-width:880px){.app{grid-template-columns:1fr;grid-auto-rows:auto}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="panel">
+      <h1>Sliding Puzzle — AI Solver</h1>
+      <p style="color:var(--muted);margin:0 0 12px;font-size:13px">Classic sliding-puzzle with an AI auto-solver, hint system, undo, timer, and difficulty levels. Built with plain HTML/CSS/JS.</p>
+
+      <div class="controls">
+        <div>
+          <label>Board size</label>
+          <select id="sizeSelect">
+            <option value="3">3 × 3 (Easy)</option>
+            <option value="4" selected>4 × 4 (Classic)</option>
+            <option value="5">5 × 5 (Hard)</option>
+          </select>
+        </div>
+        <div>
+          <label>Shuffle moves</label>
+          <input id="shuffleRange" type="range" min="10" max="300" value="60" />
+        </div>
+        <div class="buttons">
+          <button id="shuffleBtn">Shuffle</button>
+          <button id="solveBtn">Auto-solve</button>
+          <button id="hintBtn" class="secondary">Hint</button>
+          <button id="undoBtn" class="secondary">Undo</button>
+          <button id="newBtn" class="secondary">New Game</button>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <div class="stat">Moves: <span id="moves">0</span></div>
+          <div class="stat">Time: <span id="time">00:00</span></div>
+          <div class="stat">Best: <span id="best">—</span></div>
+        </div>
+
+        <div style="margin-top:12px;color:var(--muted);font-size:13px">Tips: Use <kbd>H</kbd> for hint, <kbd>S</kbd> to auto-solve, <kbd>U</kbd> to undo. Click tiles or use arrow keys.</div>
+      </div>
+    </div>
+
+    <div class="panel board-wrap">
+      <div class="meta" style="width:100%;justify-content:space-between">
+        <div style="font-weight:700">Play</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div style="font-size:13px;color:var(--muted)">AI: A* with Manhattan heuristic</div>
+        </div>
+      </div>
+
+      <div id="board" class="board" aria-label="Sliding puzzle board"></div>
+
+      <div class="footer">
+        <div>Sliding Puzzle • Responsive • Accessible</div>
+        <div style="color:var(--muted);font-size:12px">Made with ❤️</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// Utilities
+const el = id => document.getElementById(id);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+
+class Puzzle {
+  constructor(n){
+    this.n = n; // n x n
+    this.size = n*n;
+    this.state = Array.from({length:this.size}, (_,i)=>i);
+    this.history = [];
+  }
+  clone(){ const p = new Puzzle(this.n); p.state = this.state.slice(); p.history = this.history.slice(); return p }
+  index(r,c){ return r*this.n + c }
+  coords(i){ return [Math.floor(i/this.n), i%this.n] }
+  neighbors(idx){ // returns indices of tiles that can move into empty (up/down/left/right)
+    const [r,c] = this.coords(idx);
+    const out=[];
+    if(r>0) out.push(this.index(r-1,c));
+    if(r<this.n-1) out.push(this.index(r+1,c));
+    if(c>0) out.push(this.index(r,c-1));
+    if(c<this.n-1) out.push(this.index(r,c+1));
+    return out;
+  }
+  findEmpty(){ return this.state.indexOf(0) }
+  isSolved(){ for(let i=0;i<this.size;i++) if(this.state[i]!==i) return false; return true }
+  canMove(tileIdx){ const empty = this.findEmpty(); return this.neighbors(empty).includes(tileIdx) }
+  move(tileIdx){ if(!this.canMove(tileIdx)) return false; const empty=this.findEmpty(); [this.state[empty], this.state[tileIdx]] = [this.state[tileIdx], this.state[empty]]; this.history.push({tile: this.state[empty], from: tileIdx, to: empty}); return true }
+  undo(){ const last = this.history.pop(); if(!last) return; const curEmpty = this.findEmpty(); // swap back
+    const pos = this.state.index(last.tile);
+    [this.state[pos], this.state[curEmpty]] = [this.state[curEmpty], this.state[pos]]; }
+}
+
+// DOM + Game
+const boardEl = el('board');
+let puzzle = new Puzzle(4);
+let tileEls = [];
+let moves = 0; let timerId = null; let seconds = 0; let animating=false; let aiRunning=false;
+
+function initBoard(n){
+  puzzle = new Puzzle(n);
+  moves=0; seconds=0; updateStats();
+  boardEl.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+  boardEl.innerHTML=''; tileEls=[];
+  for(let i=0;i<puzzle.size;i++){
+    const tile = document.createElement('div');
+    tile.className='tile';
+    tile.dataset.index = i;
+    tile.tabIndex = 0;
+    tile.addEventListener('click', ()=>onTileClick(i));
+    tile.addEventListener('keydown', (e)=>{ if(e.key==='Enter') onTileClick(i) });
+    boardEl.appendChild(tile);
+    tileEls.push(tile);
+  }
+  render();
+}
+
+function render(){
+  const n=puzzle.n; const s=puzzle.state;
+  for(let i=0;i<s.length;i++){
+    const val = s[i];
+    const tile = tileEls[i];
+    if(val===0){ tile.classList.add('empty'); tile.textContent=''; tile.style.boxShadow='none'; }
+    else { tile.classList.remove('empty'); tile.textContent = val; tile.style.boxShadow = '0 8px 20px rgba(2,6,23,0.6)'; }
+    // compute transform to animate position
+    const [r,c] = puzzle.coords(i);
+    const percentX = (c)/(n-1) * (n>1? (100-((n-1)* (100/(n)) )):0);
+  }
+}
+
+function onTileClick(idx){ if(animating || aiRunning) return; const tileIndex = idx; if(puzzle.move(tileIndex)){ moves++; updateStats(); render(); if(puzzle.isSolved()){ stopTimer(); alert(`Solved in ${moves} moves and ${formatTime(seconds)}!`) } } }
+
+// Shuffle with random valid moves
+function shuffle(movesCount=60){ if(animating || aiRunning) return; const n=puzzle.n; let last=null; for(let i=0;i<movesCount;i++){ const empty = puzzle.findEmpty(); const neigh = puzzle.neighbors(empty).filter(x=>x!==last); const pick = neigh[Math.floor(Math.random()*neigh.length)]; [puzzle.state[empty], puzzle.state[pick]] = [puzzle.state[pick], puzzle.state[empty]]; last = pick; }
+  puzzle.history=[]; moves=0; seconds=0; updateStats(); render(); }
+
+function startTimer(){ if(timerId) return; timerId=setInterval(()=>{ seconds++; updateStats(); },1000); }
+function stopTimer(){ if(timerId){ clearInterval(timerId); timerId=null; } }
+function updateStats(){ el('moves').textContent = moves; el('time').textContent = formatTime(seconds); const key = `${puzzle.n}x${puzzle.n}-best`; const best = localStorage.getItem(key); el('best').textContent = best? best : '—'; }
+function formatTime(s){ const mm = String(Math.floor(s/60)).padStart(2,'0'); const ss = String(s%60).padStart(2,'0'); return `${mm}:${ss}` }
+
+// AI Solver: A* on permutation with Manhattan heuristic
+function manhattan(state,n){ let h=0; for(let i=0;i<state.length;i++){ const v=state[i]; if(v===0) continue; const tr=Math.floor((v)/n), tc=(v)%n; const cr=Math.floor(i/n), cc=i%n; h += Math.abs(tr-cr)+Math.abs(tc-cc); } return h }
+
+// Priority Queue (min-heap)
+class PQ{
+  constructor(){ this.data=[] }
+  push(item,prio){ this.data.push({item,prio}); this._siftUp(this.data.length-1) }
+  pop(){ if(!this.data.length) return null; const top=this.data[0]; const last=this.data.pop(); if(this.data.length){ this.data[0]=last; this._siftDown(0) } return top.item }
+  _siftUp(i){ while(i>0){ const p=Math.floor((i-1)/2); if(this.data[p].prio<=this.data[i].prio) break; [this.data[p],this.data[i]]=[this.data[i],this.data[p]]; i=p } }
+  _siftDown(i){ const n=this.data.length; while(true){ let l=2*i+1, r=2*i+2, smallest=i; if(l<n && this.data[l].prio<this.data[smallest].prio) smallest=l; if(r<n && this.data[r].prio<this.data[smallest].prio) smallest=r; if(smallest===i) break; [this.data[i],this.data[smallest]]=[this.data[smallest],this.data[i]]; i=smallest } }
+  get length(){ return this.data.length }
+}
+
+function serialize(arr){ return arr.join(',') }
+
+async function solveWithAstar(timeout=10000){ if(aiRunning) return; aiRunning=true; const start = puzzle.state.slice(); const n=puzzle.n;
+  const startS = serialize(start);
+  const open = new PQ();
+  const g = new Map();
+  const parent = new Map();
+  g.set(startS,0);
+  open.push(start, manhattan(start,n));
+  const startTime = Date.now();
+  let expanded=0;
+  while(open.length){ if(Date.now()-startTime>timeout){ aiRunning=false; return {status:'timeout'} }
+    const cur = open.pop(); const curS = serialize(cur);
+    const curG = g.get(curS);
+    if(cur.every((v,i)=>v===i)){
+      // reconstruct path
+      const path=[]; let k=curS; while(k!==startS){ const p=parent.get(k); path.push(p.move); k=p.prev; } path.reverse(); aiRunning=false; return {status:'ok',moves:path}; }
+    expanded++;
+    const empty = cur.indexOf(0);
+    const neigh = (new Puzzle(n)).neighbors(empty);
+    for(const t of neigh){ const next = cur.slice(); [next[empty], next[t]] = [next[t], next[empty]]; const sNext = serialize(next);
+      const tentative = curG+1;
+      if(!g.has(sNext) || tentative < g.get(sNext)){
+        g.set(sNext, tentative);
+        parent.set(sNext, {prev: curS, move: t});
+        const f = tentative + manhattan(next,n);
+        open.push(next,f);
+      }
+    }
+  }
+  aiRunning=false; return {status:'fail'}
+}
+
+async function animateSolution(movesArr){ if(!movesArr || !movesArr.length) return; animating=true; for(const mv of movesArr){ puzzle.move(mv); moves++; render(); updateStats(); await sleep(180); } animating=false; if(puzzle.isSolved()){ stopTimer(); saveBest(); alert(`Solved with AI in ${moves} moves and ${formatTime(seconds)}`) } }
+
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)) }
+
+function saveBest(){ const key = `${puzzle.n}x${puzzle.n}-best`; const prev = localStorage.getItem(key); const v = Number(prev)||Infinity; if(moves < v){ localStorage.setItem(key, moves); updateStats(); } }
+
+// Hints: compute one-step from A* but short timeout
+async function hint(){ const res = await solveWithAstar(2000); if(res.status==='ok' && res.moves.length){ const next = res.moves[0]; // animate highlight
+    const empty = puzzle.findEmpty(); const tilePos = next; // tile index to move into empty
+    flashTile(tilePos); }
+}
+function flashTile(idx){ const el = tileEls[idx]; if(!el) return; el.animate([{transform:'scale(1)'},{transform:'scale(1.06)'},{transform:'scale(1)'}],{duration:480,iterations:1}); }
+
+// Event handlers
+el('shuffleBtn').addEventListener('click',()=>{ const movesCount=Number(el('shuffleRange').value); shuffle(movesCount); startTimer(); });
+el('newBtn').addEventListener('click',()=>{ initBoard(Number(el('sizeSelect').value)); stopTimer(); });
+el('solveBtn').addEventListener('click', async ()=>{ if(aiRunning || animating) return; startTimer(); const r = await solveWithAstar(20000); if(r.status==='ok'){ await animateSolution(r.moves); saveBest(); } else if(r.status==='timeout'){ alert('AI timed out (too hard). Try smaller board or fewer shuffles.'); } else { alert('No solution found.'); } });
+el('hintBtn').addEventListener('click', ()=>{ hint(); });
+el('undoBtn').addEventListener('click', ()=>{ if(animating||aiRunning) return; puzzle.undo(); moves = Math.max(0,moves-1); render(); updateStats(); });
+
+el('sizeSelect').addEventListener('change', (e)=>{ initBoard(Number(e.target.value)); stopTimer(); });
+
+// keyboard support
+window.addEventListener('keydown',(e)=>{
+  if(e.key==='ArrowUp' || e.key==='ArrowDown' || e.key==='ArrowLeft' || e.key==='ArrowRight'){
+    e.preventDefault(); const empty = puzzle.findEmpty(); const [r,c] = puzzle.coords(empty); let target=null;
+    if(e.key==='ArrowUp' && r<puzzle.n-1) target = puzzle.index(r+1,c);
+    if(e.key==='ArrowDown' && r>0) target = puzzle.index(r-1,c);
+    if(e.key==='ArrowLeft' && c<puzzle.n-1) target = puzzle.index(r,c+1);
+    if(e.key==='ArrowRight' && c>0) target = puzzle.index(r,c-1);
+    if(target!==null && puzzle.move(target)){ moves++; render(); updateStats(); if(!timerId) startTimer(); if(puzzle.isSolved()){ stopTimer(); saveBest(); alert(`Solved in ${moves} moves and ${formatTime(seconds)}!`) } }
+  }
+  if(e.key==='h' || e.key==='H') hint();
+  if(e.key==='s' || e.key==='S') el('solveBtn').click();
+  if(e.key==='u' || e.key==='U') el('undoBtn').click();
+});
+
+// init
+initBoard(4);
+shuffle(60);
+startTimer();
+
+</script>
+</body>
+</html>
